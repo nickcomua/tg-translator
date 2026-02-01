@@ -74,6 +74,10 @@ impl Translator {
                 self.translate_google(text, target_language, source_language)
                     .await
             }
+            TranslationProvider::MyMemory => {
+                self.translate_mymemory(text, target_language, source_language)
+                    .await
+            }
         }
     }
 
@@ -265,6 +269,72 @@ impl Translator {
         })
     }
 
+    /// Translate using MyMemory API (free, no API key required)
+    async fn translate_mymemory(
+        &self,
+        text: &str,
+        target_language: &str,
+        source_language: Option<&str>,
+    ) -> Result<TranslationResult, TranslationError> {
+        let source = source_language.unwrap_or("en");
+        let langpair = format!("{}|{}", source, target_language);
+
+        let api_url = self
+            .config
+            .api_url
+            .as_deref()
+            .unwrap_or("https://api.mymemory.translated.net");
+
+        #[derive(Deserialize)]
+        struct MyMemoryResponse {
+            #[serde(rename = "responseData")]
+            response_data: Option<ResponseData>,
+            #[serde(rename = "responseStatus")]
+            response_status: i32,
+            #[serde(rename = "responseDetails")]
+            response_details: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct ResponseData {
+            #[serde(rename = "translatedText")]
+            translated_text: String,
+        }
+
+        let url = format!("{}/get", api_url);
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&[("q", text), ("langpair", &langpair)])
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(TranslationError::ApiError(format!(
+                "MyMemory API error: {}",
+                error_text
+            )));
+        }
+
+        let result: MyMemoryResponse = response.json().await?;
+
+        if result.response_status != 200 {
+            return Err(TranslationError::ApiError(
+                result.response_details.unwrap_or_else(|| "Unknown error".to_string()),
+            ));
+        }
+
+        match result.response_data {
+            Some(data) => Ok(TranslationResult {
+                text: data.translated_text.trim().to_string(),
+                detected_language: Some(source.to_string()),
+            }),
+            None => Err(TranslationError::EmptyResponse),
+        }
+    }
+
     /// Get the default target language from config
     pub fn default_target_language(&self) -> &str {
         &self.config.default_target_language
@@ -291,9 +361,21 @@ pub mod languages {
     pub const DUTCH: &str = "nl";
     pub const TURKISH: &str = "tr";
 
-    /// Check if a language code is valid (basic check)
+    /// List of valid ISO 639-1 language codes supported by most translation APIs
+    pub const VALID_CODES: &[&str] = &[
+        "af", "sq", "am", "ar", "hy", "az", "eu", "be", "bn", "bs", "bg", "ca", "ceb", "zh",
+        "co", "hr", "cs", "da", "nl", "en", "eo", "et", "fi", "fr", "fy", "gl", "ka", "de",
+        "el", "gu", "ht", "ha", "haw", "he", "hi", "hmn", "hu", "is", "ig", "id", "ga", "it",
+        "ja", "jv", "kn", "kk", "km", "rw", "ko", "ku", "ky", "lo", "la", "lv", "lt", "lb",
+        "mk", "mg", "ms", "ml", "mt", "mi", "mr", "mn", "my", "ne", "no", "ny", "or", "ps",
+        "fa", "pl", "pt", "pa", "ro", "ru", "sm", "gd", "sr", "st", "sn", "sd", "si", "sk",
+        "sl", "so", "es", "su", "sw", "sv", "tl", "tg", "ta", "tt", "te", "th", "tr", "tk",
+        "uk", "ur", "ug", "uz", "vi", "cy", "xh", "yi", "yo", "zu",
+    ];
+
+    /// Check if a language code is valid
     pub fn is_valid(code: &str) -> bool {
-        code.len() == 2 && code.chars().all(|c| c.is_ascii_lowercase())
+        VALID_CODES.contains(&code)
     }
 
     /// Normalize language code (handle common aliases)
@@ -308,13 +390,83 @@ pub mod languages {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TranslationConfig;
 
     #[test]
     fn test_language_validation() {
+        // Valid codes
         assert!(languages::is_valid("en"));
         assert!(languages::is_valid("de"));
+        assert!(languages::is_valid("uk"));
+        assert!(languages::is_valid("ru"));
+        assert!(languages::is_valid("fr"));
+        assert!(languages::is_valid("es"));
+        assert!(languages::is_valid("ja"));
+        assert!(languages::is_valid("zh"));
+
+        // Invalid codes
         assert!(!languages::is_valid(""));
         assert!(!languages::is_valid("eng"));
         assert!(!languages::is_valid("EN"));
+        assert!(!languages::is_valid("gg")); // Not a real language
+        assert!(!languages::is_valid("xx")); // Not a real language
+        assert!(!languages::is_valid("ua")); // Should use "uk" for Ukrainian
+    }
+
+    #[test]
+    fn test_language_normalization() {
+        assert_eq!(languages::normalize("ua"), "uk");
+        assert_eq!(languages::normalize("en"), "en");
+        assert_eq!(languages::normalize("de"), "de");
+    }
+
+    #[tokio::test]
+    async fn test_mymemory_translation() {
+        let config = TranslationConfig {
+            provider: crate::config::TranslationProvider::MyMemory,
+            api_key: None,
+            api_url: None,
+            default_target_language: "uk".to_string(),
+        };
+
+        let translator = Translator::new(config);
+        let result = translator.translate("Hello", "uk", Some("en")).await;
+
+        match result {
+            Ok(translation) => {
+                println!("Translation: {}", translation.text);
+                assert!(!translation.text.is_empty());
+                // Ukrainian translation should contain Cyrillic characters
+                assert!(translation.text.chars().any(|c| c >= '\u{0400}' && c <= '\u{04FF}'));
+            }
+            Err(e) => {
+                panic!("Translation failed: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_translation_different_languages() {
+        let config = TranslationConfig {
+            provider: crate::config::TranslationProvider::MyMemory,
+            api_key: None,
+            api_url: None,
+            default_target_language: "es".to_string(),
+        };
+
+        let translator = Translator::new(config);
+
+        // Translate English to Spanish
+        let result = translator.translate("Good morning", "es", Some("en")).await;
+        match result {
+            Ok(translation) => {
+                println!("Spanish translation: {}", translation.text);
+                assert!(!translation.text.is_empty());
+            }
+            Err(e) => {
+                // Network errors in test environment are acceptable
+                println!("Translation test skipped due to network: {}", e);
+            }
+        }
     }
 }

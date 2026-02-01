@@ -57,7 +57,7 @@ pub struct TranslationConfig {
 }
 
 fn default_provider() -> TranslationProvider {
-    TranslationProvider::LibreTranslate
+    TranslationProvider::MyMemory
 }
 
 fn default_target_language() -> String {
@@ -71,6 +71,7 @@ pub enum TranslationProvider {
     DeepL,
     Google,
     LibreTranslate,
+    MyMemory,
 }
 
 /// Bot behavior configuration
@@ -167,13 +168,14 @@ impl Config {
         let session_file = std::env::var("TG_SESSION_FILE").unwrap_or_else(|_| "bot.session".into());
 
         let provider = match std::env::var("TRANSLATION_PROVIDER")
-            .unwrap_or_else(|_| "libretranslate".into())
+            .unwrap_or_else(|_| "mymemory".into())
             .to_lowercase()
             .as_str()
         {
             "deepl" => TranslationProvider::DeepL,
             "google" => TranslationProvider::Google,
-            _ => TranslationProvider::LibreTranslate,
+            "libretranslate" => TranslationProvider::LibreTranslate,
+            _ => TranslationProvider::MyMemory,
         };
 
         let translation_api_key = std::env::var("TRANSLATION_API_KEY").ok();
