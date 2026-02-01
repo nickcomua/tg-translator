@@ -1,0 +1,41 @@
+[package]
+name = "tg-translator"
+version = "0.1.0"
+edition = "2021"
+description = "A Telegram bot that translates messages from specific users in groups"
+license = "MIT"
+
+[dependencies]
+# Telegram client
+grammers-client = "0.8"
+grammers-session = "0.8"
+grammers-mtsender = "0.8"
+grammers-tl-types = "0.8"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Configuration and serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Environment variables
+dotenvy = "0.15"
+
+# HTTP client for translation API
+reqwest = { version = "0.12", features = ["json"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Async utilities
+futures = "0.3"
+
+# URL encoding
+urlencoding = "2"
