@@ -95,27 +95,62 @@ impl Bot {
         // Check if we should translate this message
         let peer = message.peer();
         let sender = message.sender();
+        let chat_id = message.peer_id().bare_id();
+
+        debug!(
+            "Received message: '{}' in chat {} (peer type: {:?})",
+            text, chat_id, message.peer_id().kind()
+        );
 
         // Only process group messages
         let is_group = match &peer {
-            Ok(Peer::Group(_)) => true,
-            Ok(Peer::Channel(_)) => true, // Supergroups are channels in Telegram API
-            _ => false,
+            Ok(Peer::Group(_)) => {
+                debug!("Chat {} is a Group", chat_id);
+                true
+            }
+            Ok(Peer::Channel(_)) => {
+                debug!("Chat {} is a Channel/Supergroup", chat_id);
+                true
+            }
+            Ok(Peer::User(_)) => {
+                debug!("Chat {} is a private User chat, skipping", chat_id);
+                false
+            }
+            Err(e) => {
+                debug!("Failed to get peer info: {:?}", e);
+                false
+            }
         };
 
         if !is_group {
             return Ok(());
         }
 
-        let chat_id = message.peer_id().bare_id();
         let sender_id = match &sender {
-            Some(Peer::User(user)) => user.bare_id(),
-            _ => return Ok(()),
+            Some(Peer::User(user)) => {
+                let id = user.bare_id();
+                debug!("Message sender: user {}", id);
+                id
+            }
+            Some(other) => {
+                debug!("Message sender is not a user: {:?}", other);
+                return Ok(());
+            }
+            None => {
+                debug!("No sender info available");
+                return Ok(());
+            }
         };
 
         // Check if this user should be translated
         let targets = self.targets.read().await;
-        if !targets.should_translate(chat_id, sender_id) {
+        let should_translate = targets.should_translate(chat_id, sender_id);
+        debug!(
+            "Should translate user {} in chat {}: {}",
+            sender_id, chat_id, should_translate
+        );
+
+        if !should_translate {
             return Ok(());
         }
 
@@ -123,14 +158,17 @@ impl Bot {
             targets.get_target_language(chat_id, self.translator.default_target_language());
         drop(targets); // Release the lock
 
+        debug!("Target language for chat {}: {}", chat_id, target_language);
+
         // Translate the message
         if text.is_empty() {
+            debug!("Empty message, skipping translation");
             return Ok(());
         }
 
-        debug!(
-            "Translating message from user {} in chat {}",
-            sender_id, chat_id
+        info!(
+            "Translating message '{}' from user {} in chat {} to {}",
+            text, sender_id, chat_id, target_language
         );
 
         match self
