@@ -1,0 +1,51 @@
+# Telegram Translation Bot - Configuration File
+# Copy this file to config.toml and fill in your values
+
+# ==================== Telegram API Configuration ====================
+[telegram]
+# Your API ID from https://my.telegram.org/apps
+api_id = 12345678
+
+# Your API Hash from https://my.telegram.org/apps
+api_hash = "your_api_hash_here"
+
+# Bot token from @BotFather (for bot mode)
+# Remove this line to use user account mode instead
+bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+
+# Phone number for user account mode (uncomment if not using bot token)
+# phone_number = "+1234567890"
+
+# Session file path
+session_file = "bot.session"
+
+# ==================== Translation Configuration ====================
+[translation]
+# Translation provider: "libretranslate", "deepl", or "google"
+provider = "libretranslate"
+
+# API key (required for DeepL, optional for some LibreTranslate instances)
+# api_key = "your_api_key_here"
+
+# API URL for self-hosted services
+# For LibreTranslate: your self-hosted instance URL
+# For DeepL: leave empty for automatic detection (free vs pro)
+# api_url = "https://libretranslate.com"
+
+# Default target language for translations (ISO 639-1 code)
+default_target_language = "en"
+
+# ==================== Bot Behavior ====================
+[bot]
+# Command prefix (default: "/")
+command_prefix = "/"
+
+# Show original message alongside translation
+show_original = false
+
+# Admin user IDs who can configure the bot in any chat
+admin_user_ids = [123456789, 987654321]
+
+# Reply format template
+# Available variables: {translation}, {source_lang}, {target_lang}
+reply_format = "**Translation** ({source_lang} -> {target_lang}):\n{translation}"

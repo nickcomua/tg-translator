@@ -19,3 +19,22 @@ target
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+
+# Added by cargo
+/target
+
+# ==================== Bot Specific ====================
+
+# Session files (contain authentication data)
+*.session
+
+# Configuration files with secrets
+config.toml
+.env
+
+# Translation targets (runtime data)
+translation_targets.json
+
+# Logs
+*.log
