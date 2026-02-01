@@ -295,6 +295,14 @@ pub mod languages {
     pub fn is_valid(code: &str) -> bool {
         code.len() == 2 && code.chars().all(|c| c.is_ascii_lowercase())
     }
+
+    /// Normalize language code (handle common aliases)
+    pub fn normalize(code: &str) -> &str {
+        match code {
+            "ua" => "uk", // Ukrainian: ua is common but uk is ISO 639-1
+            other => other,
+        }
+    }
 }
 
 #[cfg(test)]

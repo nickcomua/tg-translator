@@ -160,7 +160,14 @@ impl Bot {
                 );
             }
             Err(e) => {
-                warn!("Translation failed: {}", e);
+                error!("Translation failed for message '{}': {}", text, e);
+                // Optionally notify user of translation failure
+                if let Err(reply_err) = message
+                    .reply(InputMessage::new().text(&format!("⚠️ Translation failed: {}", e)))
+                    .await
+                {
+                    error!("Failed to send error reply: {}", reply_err);
+                }
             }
         }
 
@@ -481,11 +488,15 @@ Note: Only group admins can configure translation settings."#;
         }
 
         let lang_code = match args.first() {
-            Some(code) => code.to_lowercase(),
+            Some(code) => {
+                let code = code.to_lowercase();
+                // Normalize language code (e.g., ua -> uk)
+                crate::translator::languages::normalize(&code).to_string()
+            }
             None => {
                 message
                     .reply(InputMessage::new().text(
-                        "Please specify a language code: `/lang <code>`\n\nExamples: en, es, fr, de, it, pt, ru, zh, ja, ko",
+                        "Please specify a language code: `/lang <code>`\n\nExamples: en, es, fr, de, it, pt, ru, zh, ja, ko, uk (Ukrainian)",
                     ))
                     .await?;
                 return Ok(());
@@ -604,10 +615,31 @@ Note: Only group admins can configure translation settings."#;
             return Ok(Some(id));
         }
 
-        // TODO: Resolve username to user ID using Telegram API
-        // This would require using client.resolve_username() or similar
-        // For now, we only support user IDs
-        warn!("Username resolution not yet implemented, use user IDs");
-        Ok(None)
+        // Resolve username using Telegram API
+        debug!("Resolving username: {}", user_str);
+        match self.client.resolve_username(user_str).await {
+            Ok(Some(peer)) => {
+                // Get user ID from the resolved peer
+                match peer {
+                    Peer::User(user) => {
+                        let user_id = user.bare_id();
+                        info!("Resolved username @{} to user ID {}", user_str, user_id);
+                        Ok(Some(user_id))
+                    }
+                    _ => {
+                        warn!("@{} is not a user (might be a channel/group)", user_str);
+                        Ok(None)
+                    }
+                }
+            }
+            Ok(None) => {
+                warn!("Username @{} not found", user_str);
+                Ok(None)
+            }
+            Err(e) => {
+                error!("Failed to resolve username @{}: {}", user_str, e);
+                Ok(None)
+            }
+        }
     }
 }
