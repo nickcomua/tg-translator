@@ -93,38 +93,25 @@ impl Bot {
         }
 
         // Check if we should translate this message
-        let peer = message.peer();
         let sender = message.sender();
-        let chat_id = message.peer_id().bare_id();
+        let peer_id = message.peer_id();
+        let chat_id = peer_id.bare_id();
+        let peer_kind = peer_id.kind();
 
         debug!(
-            "Received message: '{}' in chat {} (peer type: {:?})",
-            text, chat_id, message.peer_id().kind()
+            "Received message: '{}' in chat {} (peer kind: {:?})",
+            text, chat_id, peer_kind
         );
 
-        // Only process group messages
-        let is_group = match &peer {
-            Ok(Peer::Group(_)) => {
-                debug!("Chat {} is a Group", chat_id);
-                true
-            }
-            Ok(Peer::Channel(_)) => {
-                debug!("Chat {} is a Channel/Supergroup", chat_id);
-                true
-            }
-            Ok(Peer::User(_)) => {
-                debug!("Chat {} is a private User chat, skipping", chat_id);
-                false
-            }
-            Err(e) => {
-                debug!("Failed to get peer info: {:?}", e);
-                false
-            }
-        };
+        // Only process group messages (use same check as is_group_peer)
+        let is_group = matches!(peer_kind, PeerKind::Channel | PeerKind::Chat);
 
         if !is_group {
+            debug!("Chat {} is not a group (kind: {:?}), skipping", chat_id, peer_kind);
             return Ok(());
         }
+
+        debug!("Chat {} is a group/channel, processing", chat_id);
 
         let sender_id = match &sender {
             Some(Peer::User(user)) => {
