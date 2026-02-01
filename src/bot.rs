@@ -230,11 +230,11 @@ impl Bot {
             .strip_prefix(&self.config.command_prefix)
             .unwrap_or(text);
 
-        // Remove bot username if present (e.g., /command@botname)
-        let text = text.split('@').next().unwrap_or(text);
-
         let mut parts = text.split_whitespace();
-        let name = parts.next().unwrap_or("").to_lowercase();
+        let cmd_part = parts.next().unwrap_or("");
+
+        // Remove bot username if present (e.g., /command@botname -> command)
+        let name = cmd_part.split('@').next().unwrap_or(cmd_part).to_lowercase();
         let args: Vec<String> = parts.map(|s| s.to_string()).collect();
 
         Command { name, args }
