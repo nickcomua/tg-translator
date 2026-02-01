@@ -141,11 +141,11 @@ impl Bot {
             return Ok(());
         }
 
-        let target_language =
-            targets.get_target_language(chat_id, self.translator.default_target_language());
+        let target_languages =
+            targets.get_target_languages(chat_id, self.translator.default_target_language());
         drop(targets); // Release the lock
 
-        debug!("Target language for chat {}: {}", chat_id, target_language);
+        debug!("Target languages for chat {}: {:?}", chat_id, target_languages);
 
         // Translate the message
         if text.is_empty() {
@@ -154,46 +154,59 @@ impl Bot {
         }
 
         info!(
-            "Translating message '{}' from user {} in chat {} to {}",
-            text, sender_id, chat_id, target_language
+            "Translating message '{}' from user {} in chat {} to {:?}",
+            text, sender_id, chat_id, target_languages
         );
 
-        match self
-            .translator
-            .translate(text, &target_language, None)
-            .await
-        {
-            Ok(result) => {
-                let source_lang = result.detected_language.as_deref().unwrap_or("auto");
+        // Translate to each target language
+        let mut translations = Vec::new();
+        let mut detected_source = None;
 
-                // Don't reply if source and target language are the same
-                if source_lang == target_language {
-                    debug!("Skipping translation - same language detected");
-                    return Ok(());
+        for target_lang in &target_languages {
+            match self.translator.translate(text, target_lang, None).await {
+                Ok(result) => {
+                    let source_lang = result.detected_language.as_deref().unwrap_or("auto");
+                    detected_source = Some(source_lang.to_string());
+
+                    // Skip if source and target language are the same
+                    if source_lang == target_lang {
+                        debug!("Skipping {} - same as source language", target_lang);
+                        continue;
+                    }
+
+                    translations.push((target_lang.clone(), result.text));
                 }
-
-                let reply_text = self.format_reply(&result.text, source_lang, &target_language);
-
-                message
-                    .reply(InputMessage::new().text(&reply_text))
-                    .await
-                    .context("Failed to send translation reply")?;
-
-                info!(
-                    "Translated message from {} ({} -> {})",
-                    sender_id, source_lang, target_language
-                );
-            }
-            Err(e) => {
-                error!("Translation failed for message '{}': {}", text, e);
-                // Optionally notify user of translation failure
-                if let Err(reply_err) = message
-                    .reply(InputMessage::new().text(&format!("⚠️ Translation failed: {}", e)))
-                    .await
-                {
-                    error!("Failed to send error reply: {}", reply_err);
+                Err(e) => {
+                    error!("Translation to {} failed: {}", target_lang, e);
                 }
             }
+        }
+
+        // Send combined translation reply
+        if !translations.is_empty() {
+            let source_lang = detected_source.as_deref().unwrap_or("auto");
+            let reply_text = if translations.len() == 1 {
+                let (target_lang, translation) = &translations[0];
+                self.format_reply(translation, source_lang, target_lang)
+            } else {
+                // Multiple translations
+                let parts: Vec<String> = translations
+                    .iter()
+                    .map(|(lang, trans)| format!("**{}:** {}", lang.to_uppercase(), trans))
+                    .collect();
+                format!("🌐 **Translations** (from {}):\n{}", source_lang, parts.join("\n"))
+            };
+
+            message
+                .reply(InputMessage::new().text(&reply_text))
+                .await
+                .context("Failed to send translation reply")?;
+
+            let langs: Vec<&str> = translations.iter().map(|(l, _)| l.as_str()).collect();
+            info!(
+                "Translated message from {} ({} -> {:?})",
+                sender_id, source_lang, langs
+            );
         }
 
         Ok(())
@@ -471,8 +484,8 @@ Note: Only group admins can configure translation settings."#;
 
         let targets = self.targets.read().await;
         let users = targets.list_users(chat_id);
-        let target_lang =
-            targets.get_target_language(chat_id, self.translator.default_target_language());
+        let target_langs =
+            targets.get_target_languages(chat_id, self.translator.default_target_language());
 
         if users.is_empty() {
             message
@@ -481,9 +494,9 @@ Note: Only group admins can configure translation settings."#;
         } else {
             let user_list: Vec<String> = users.iter().map(|id| format!("`{}`", id)).collect();
             let text = format!(
-                "**Users being translated:**\n{}\n\n**Target language:** `{}`",
+                "**Users being translated:**\n{}\n\n**Target language(s):** `{}`",
                 user_list.join("\n"),
-                target_lang
+                target_langs.join(", ")
             );
             message.reply(InputMessage::new().text(&text)).await?;
         }
@@ -512,27 +525,46 @@ Note: Only group admins can configure translation settings."#;
             return Ok(());
         }
 
-        let lang_code = match args.first() {
-            Some(code) => {
-                let code = code.to_lowercase();
-                // Normalize language code (e.g., ua -> uk)
-                crate::translator::languages::normalize(&code).to_string()
-            }
-            None => {
-                message
-                    .reply(InputMessage::new().text(
-                        "Please specify a language code: `/lang <code>`\n\nExamples: en, es, fr, de, it, pt, ru, zh, ja, ko, uk (Ukrainian)",
-                    ))
-                    .await?;
-                return Ok(());
-            }
-        };
-
-        if !crate::translator::languages::is_valid(&lang_code) {
+        // Join all args and split by comma to support both "/lang uk,es" and "/lang uk es"
+        let lang_input = args.join(" ");
+        if lang_input.is_empty() {
             message
                 .reply(InputMessage::new().text(
-                    "Invalid language code. Please use a 2-letter ISO 639-1 code (e.g., en, es, fr, de).",
+                    "Please specify language code(s): `/lang <code>` or `/lang <code1>,<code2>`\n\nExamples: en, es, fr, de, uk (Ukrainian)\nMultiple: `/lang uk,es` or `/lang uk es`",
                 ))
+                .await?;
+            return Ok(());
+        }
+
+        // Parse comma or space separated language codes
+        let lang_codes: Vec<String> = lang_input
+            .split(|c| c == ',' || c == ' ')
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .map(|s| crate::translator::languages::normalize(&s).to_string())
+            .collect();
+
+        // Validate all language codes
+        let mut invalid_codes = Vec::new();
+        for code in &lang_codes {
+            if !crate::translator::languages::is_valid(code) {
+                invalid_codes.push(code.clone());
+            }
+        }
+
+        if !invalid_codes.is_empty() {
+            message
+                .reply(InputMessage::new().text(&format!(
+                    "Invalid language code(s): `{}`. Please use 2-letter ISO 639-1 codes (e.g., en, es, fr, de, uk).",
+                    invalid_codes.join(", ")
+                )))
+                .await?;
+            return Ok(());
+        }
+
+        if lang_codes.is_empty() {
+            message
+                .reply(InputMessage::new().text("No valid language codes provided."))
                 .await?;
             return Ok(());
         }
@@ -541,15 +573,16 @@ Note: Only group admins can configure translation settings."#;
 
         {
             let mut targets = self.targets.write().await;
-            targets.set_target_language(chat_id, lang_code.clone());
+            targets.set_target_languages(chat_id, lang_codes.clone());
         }
         self.save_targets().await?;
 
+        let lang_display = lang_codes.join(", ");
         message
-            .reply(InputMessage::new().text(&format!("Target language set to `{}`.", lang_code)))
+            .reply(InputMessage::new().text(&format!("Target language(s) set to `{}`.", lang_display)))
             .await?;
 
-        info!("Set target language to {} in chat {}", lang_code, chat_id);
+        info!("Set target languages to {} in chat {}", lang_display, chat_id);
 
         Ok(())
     }
@@ -561,32 +594,34 @@ Note: Only group admins can configure translation settings."#;
         let targets = self.targets.read().await;
         let group_config = targets.groups.get(&chat_id);
 
-        let (enabled, user_count, target_lang) = match group_config {
+        let (enabled, user_count, target_langs) = match group_config {
             Some(config) => (
                 config.enabled,
                 config.users.len(),
-                config
-                    .target_language
-                    .clone()
-                    .unwrap_or_else(|| self.translator.default_target_language().to_string()),
+                if config.target_languages.is_empty() {
+                    vec![self.translator.default_target_language().to_string()]
+                } else {
+                    config.target_languages.clone()
+                },
             ),
             None => (
                 true,
                 0,
-                self.translator.default_target_language().to_string(),
+                vec![self.translator.default_target_language().to_string()],
             ),
         };
+        let target_langs_display = target_langs.join(", ");
 
         let status_text = format!(
             "**Translation Bot Status**\n\n\
             **Chat ID:** `{}`\n\
             **Enabled:** {}\n\
             **Users being translated:** {}\n\
-            **Target language:** `{}`",
+            **Target language(s):** `{}`",
             chat_id,
             if enabled { "Yes" } else { "No" },
             user_count,
-            target_lang
+            target_langs_display
         );
 
         message

@@ -126,8 +126,9 @@ pub struct TranslationTargets {
 pub struct GroupTranslationConfig {
     /// Users whose messages should be translated
     pub users: HashSet<i64>,
-    /// Target language for this group (overrides default)
-    pub target_language: Option<String>,
+    /// Target languages for this group (overrides default)
+    #[serde(default)]
+    pub target_languages: Vec<String>,
     /// Whether translation is enabled for this group
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -252,12 +253,18 @@ impl TranslationTargets {
             .unwrap_or(false)
     }
 
-    /// Get target language for a group
-    pub fn get_target_language(&self, group_id: i64, default: &str) -> String {
+    /// Get target languages for a group
+    pub fn get_target_languages(&self, group_id: i64, default: &str) -> Vec<String> {
         self.groups
             .get(&group_id)
-            .and_then(|g| g.target_language.clone())
-            .unwrap_or_else(|| default.to_string())
+            .map(|g| {
+                if g.target_languages.is_empty() {
+                    vec![default.to_string()]
+                } else {
+                    g.target_languages.clone()
+                }
+            })
+            .unwrap_or_else(|| vec![default.to_string()])
     }
 
     /// Add a user to translate in a group
@@ -280,15 +287,15 @@ impl TranslationTargets {
         false
     }
 
-    /// Set target language for a group
-    pub fn set_target_language(&mut self, group_id: i64, language: String) {
+    /// Set target languages for a group
+    pub fn set_target_languages(&mut self, group_id: i64, languages: Vec<String>) {
         self.groups
             .entry(group_id)
             .or_insert_with(|| GroupTranslationConfig {
                 enabled: true,
                 ..Default::default()
             })
-            .target_language = Some(language);
+            .target_languages = languages;
     }
 
     /// Enable/disable translation for a group
@@ -325,9 +332,9 @@ mod tests {
         assert!(targets.remove_user(123, 456));
         assert!(!targets.should_translate(123, 456));
 
-        // Set language
-        targets.set_target_language(123, "de".to_string());
-        assert_eq!(targets.get_target_language(123, "en"), "de");
-        assert_eq!(targets.get_target_language(999, "en"), "en");
+        // Set languages
+        targets.set_target_languages(123, vec!["de".to_string(), "uk".to_string()]);
+        assert_eq!(targets.get_target_languages(123, "en"), vec!["de", "uk"]);
+        assert_eq!(targets.get_target_languages(999, "en"), vec!["en"]);
     }
 }
